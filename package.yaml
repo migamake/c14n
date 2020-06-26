@@ -1,0 +1,29 @@
+name:                c14n
+version:             0.1.0.0
+github:              "mbg/c14n"
+license:             MIT
+author:              "Michael B. Gale"
+maintainer:          "m.gale@warwick.ac.uk"
+copyright:           "Copyright (c) Michael B. Gale"
+
+description:         Bindings to the c14n implementation in libxml.
+
+extra-libraries:
+- xml2
+
+when:
+- condition: os(darwin)
+  extra-lib-dirs:
+    - /usr/local/opt/libxml2/lib
+  include-dirs:
+    - /usr/local/opt/libxml2/include/libxml2
+
+dependencies:
+- base
+- bytestring
+
+library:
+    source-dirs: src
+    c-sources: cbits/*.c
+    ghc-options:
+    - -W
