@@ -10,6 +10,9 @@ synopsis:            Bindings to the c14n implementation in libxml.
 
 description:         Please see the README on GitHub at <https://github.com/mbg/c14n#readme> 
 
+pkg-config-dependencies:
+- libxml-2.0
+
 extra-libraries:
 - xml2
 
