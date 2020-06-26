@@ -16,7 +16,7 @@ jobs:
     
     - name: Install system dependencies 
       run: |
-        sudo apt-get install libxml2
+        sudo apt-get install libxml2-dev
 
     - name: Install the Haskell Stack 
       run: |
