@@ -198,7 +198,7 @@ data LibXMLXPathCtx
 -- | XML XPath objects
 data LibXMLXPathObj
 
--- | Free some memory.
+-- | Free an XML object.
 foreign import ccall unsafe "freeXml"
     freeXml :: Ptr a -> IO ()
 
