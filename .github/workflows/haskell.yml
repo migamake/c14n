@@ -46,4 +46,4 @@ jobs:
     - name: Build 
       run: |
         export PATH=$HOME/.local/bin:$PATH
-        stack --stack-yaml=${{ matrix.resolver }}.yaml --no-terminal build --fast
+        stack --stack-yaml=${{ matrix.resolver }}.yaml --no-terminal build --fast --extra-include-dirs=/usr/include/libxml2/ --extra-lib-dirs=/usr/lib/x86_64-linux-gnu/
