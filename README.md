@@ -1,5 +1,9 @@
 # c14n
 
+![GitHub](https://img.shields.io/github/license/mbg/c14n)
+![Haskell CI](https://github.com/mbg/c14n/workflows/Haskell%20CI/badge.svg?branch=master)
+[![Hackage](https://img.shields.io/hackage/v/c14n)](https://hackage.haskell.org/package/c14n)
+
 Haskell bindings for the c14n implementation in libxml (XML canonicalisation). Unfortunately there is (at the time of writing) no pure Haskell implementation, so this seems like the best option.
 
 ## Requirements
