@@ -19,6 +19,6 @@ The arguments, in order, are:
 
 * Parser options, see the module documentation or the [libxml2 documentation](http://xmlsoft.org/html/libxml-parser.html)
 * The canonicalisation specification to use (`c14n_1_0`, `c14n_exclusive_1_0`, or `c14n_1_1`).
-* A list of 
+* A (potentially empty) list of namespace prefixes which is used when the canonicalisation specification used is 'c14n_exclusive_1_0'
 * A boolean value indicating whether to keep comments in the output or not.
-* A thing
+* An XPath location path used to select a set of nodes that should be included in the canonicalised result
