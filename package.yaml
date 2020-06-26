@@ -5,8 +5,10 @@ license:             MIT
 author:              "Michael B. Gale"
 maintainer:          "m.gale@warwick.ac.uk"
 copyright:           "Copyright (c) Michael B. Gale"
+category:            XML
+synopsis:            Bindings to the c14n implementation in libxml.
 
-description:         Bindings to the c14n implementation in libxml.
+description:         Please see the README on GitHub at <https://github.com/mbg/c14n#readme> 
 
 extra-libraries:
 - xml2
@@ -19,7 +21,7 @@ when:
     - /usr/local/opt/libxml2/include/libxml2
 
 dependencies:
-- base
+- base >= 4.8 && < 5
 - bytestring
 
 library:
