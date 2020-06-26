@@ -8,7 +8,8 @@ copyright:           "Copyright (c) Michael B. Gale"
 category:            XML
 synopsis:            Bindings to the c14n implementation in libxml.
 
-description:         Please see the README on GitHub at <https://github.com/mbg/c14n#readme> 
+description:         "Haskell bindings for the c14n implementation in libxml (XML canonicalisation).
+                      See the README at <https://github.com/mbg/c14n#readme> for more information."
 
 pkg-config-dependencies:
 - libxml-2.0
