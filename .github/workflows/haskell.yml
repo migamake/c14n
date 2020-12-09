@@ -1,6 +1,13 @@
 name: Haskell CI
 
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - 'cbits/**'
+      - 'src/**'
+      - 'package.yaml'
+      - 'stack*.yaml'
+  pull_request:
 
 jobs:
   build:
