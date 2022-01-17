@@ -20,6 +20,9 @@ extra-libraries:
 dependencies:
 - base >= 4.8 && < 5
 - bytestring >= 0.9 && < 0.11
+- inline-c
+- template-haskell
+- containers
 
 library:
     source-dirs: src

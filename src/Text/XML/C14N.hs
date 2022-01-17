@@ -38,18 +38,21 @@ module Text.XML.C14N (
     xml_opt_oldsax,
     xml_opt_ignore_env,
     xml_opt_big_lines,
-    parseXml
+    parseXml,
+
+    evalXPath
 ) where 
 
 --------------------------------------------------------------------------------
 
+import Control.Monad
 import Control.Exception
 
 import Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 
-import Text.XML.C14N.LibXML 
+import Text.XML.C14N.LibXML
 
 import Foreign.Ptr
 import Foreign.ForeignPtr
@@ -92,6 +95,7 @@ withXmlXPathNodeList docPtr expr cont =
         -- the XPath object structure contains the node set pointer
         -- at offset 8; see 
         -- http://xmlsoft.org/html/libxml-xpath.html#xmlXPathObject
+        -- TODO here we need to check xmlXPathObjectType!
         $ \a -> peekByteOff a 8 >>= cont
 
 -- | 'c14n' @parseOpts mode nsPrefixes keepComments xPathLocation input@ 
@@ -144,3 +148,35 @@ c14n opts mode nsPrefixes keepComments xpath bin =
             ptrPtr (fromIntegral numBytes) (freeXml ptrPtr)
 
 --------------------------------------------------------------------------------
+--
+--
+
+withXmlBuffer :: (Ptr LibXMLBuffer -> IO a) -> IO (BS.ByteString,  a)
+withXmlBuffer act =
+    let bufferSize = 1024*1024*10 in
+    bracket
+        (throwErrnoIfNull "xmlCreateBufferSize" $ xmlCreateBufferSize bufferSize)
+        xmlBufferFree
+        (\buf -> do
+            res <- act buf
+            cstr <- xmlBufferContent buf
+            bstr <- BS.packCString cstr
+            return (bstr, res)
+            )
+
+
+evalXPath :: BS.ByteString -- ^ input document
+          -> BS.ByteString -- ^ input xpath
+          -> IO BS.ByteString -- ^ result in string form
+evalXPath doc xpath = do
+    let opts = [{-xml_opt_noerror,-} xml_opt_recover]
+    parsedDoc <- parseXml opts doc
+    withForeignPtr parsedDoc $ \ptr -> do
+        withXmlXPathNodeList ptr xpath $ \nsPtr -> do
+            (buf, _) <- withXmlBuffer $ \bufferPtr -> do
+                errCode <- xmlNodeSetDump bufferPtr nsPtr
+                when (errCode < 0) $ fail ("Buffer error: " ++ show (errCode + 100))
+                return ()
+            return buf
+
+

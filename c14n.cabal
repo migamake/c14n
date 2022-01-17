@@ -25,6 +25,7 @@ source-repository head
 library
   exposed-modules:
       Text.XML.C14N
+      Text.XML.C14N.Internal
       Text.XML.C14N.LibXML
   other-modules:
       Paths_c14n
@@ -40,4 +41,7 @@ library
   build-depends:
       base >=4.8 && <5
     , bytestring >=0.9 && <0.11
+    , containers
+    , inline-c
+    , template-haskell
   default-language: Haskell2010

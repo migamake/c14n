@@ -4,7 +4,8 @@
 -- This source code is licensed under the MIT license found in the LICENSE    --
 -- file in the root directory of this source tree.                            --
 --------------------------------------------------------------------------------
-
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | Bindings to libxml types and functions required for the c14n 
 -- implementation. See http://xmlsoft.org/html/libxml-c14n.html
 module Text.XML.C14N.LibXML (
@@ -14,6 +15,7 @@ module Text.XML.C14N.LibXML (
     LibXMLChar,
     LibXMLXPathCtx,
     LibXMLXPathObj,
+    LibXMLBuffer,
 
     -- * Memory-related functions
     freeXml,
@@ -58,7 +60,13 @@ module Text.XML.C14N.LibXML (
     xmlXPathNewContext,
     xmlXPathFreeContext,
     xmlXPathEval,
-    xmlXPathFreeObject
+    xmlXPathFreeObject,
+
+
+    xmlCreateBufferSize,
+    xmlBufferContent,
+    xmlBufferFree,
+    xmlNodeSetDump
 ) where 
 
 --------------------------------------------------------------------------------
@@ -71,6 +79,17 @@ import Data.Word
 import Foreign.Ptr
 import Foreign.C.String
 import Foreign.C.Types
+
+
+import qualified Language.C.Inline as C
+
+import Text.XML.C14N.Internal
+
+
+C.context xmlCtx
+
+C.include "<libxml/tree.h>"
+C.include "<libxml/xpath.h>"
 
 --------------------------------------------------------------------------------
 
@@ -186,8 +205,6 @@ xml_opt_big_lines = #{const XML_PARSE_BIG_LINES}
 -- | XML documents
 data LibXMLDoc 
 
--- | XML node sets
-data LibXMLNodeSet
 
 -- | XML strings
 type LibXMLChar = #type xmlChar
@@ -247,5 +264,47 @@ foreign import ccall unsafe "libxml/xpath.h xmlXPathEval"
 -- | Free up an 'LibXMLXPathObj' object.
 foreign import ccall unsafe "libxml/xpath.h xmlXPathFreeObject"
     xmlXPathFreeObject :: Ptr LibXMLXPathObj -> IO ()
+
+
+
+-- | Create buffer with given size
+foreign import ccall unsafe "libxml/tree.h xmlBufferCreateSize"
+    xmlCreateBufferSize :: CInt -> IO (Ptr LibXMLBuffer)
+
+
+-- | Get buffer content
+foreign import ccall unsafe "libxml/tree.h xmlBufferContent"
+    xmlBufferContent :: Ptr LibXMLBuffer -> IO CString
+
+-- | Free the buffer
+foreign import ccall unsafe "libxml/tree.h xmlBufferFree"
+    xmlBufferFree :: Ptr LibXMLBuffer -> IO ()
+
+
+xmlNodeSetDump :: Ptr LibXMLBuffer
+               -> Ptr LibXMLNodeSet
+               -> IO CInt -- return code, 0 for no errors
+                          --              1 for empty node set
+                          --              2 for null node set ptr
+                          --             <-100 for buffer errors
+xmlNodeSetDump buf nodeSet =
+    -- TODO `xmlNodeDump` is deprecated, so rewrite with `xmlNodeDumpOutput`
+    [C.block| int {
+        xmlBufferPtr bufPtr = $(xmlBuffer* buf);
+        xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+        if (NULL == nodeSetPtr)
+            return 1;
+        if (nodeSetPtr->nodeNr <= 0)
+            return 2;
+        for (int i = 0; i < nodeSetPtr->nodeNr; ++i) {
+            xmlNodePtr node = nodeSetPtr->nodeTab[i];
+            int writtenBytes = xmlNodeDump(bufPtr, NULL, node, 0, 0); // as in `xmllint`
+            if (writtenBytes < 0)
+                return (writtenBytes - 100);
+            xmlBufferWriteChar(bufPtr, "\n");
+        }
+        xmlBufferWriteChar(bufPtr, "\0");
+        return 0;
+    }|]
 
 --------------------------------------------------------------------------------
