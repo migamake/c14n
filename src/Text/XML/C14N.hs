@@ -71,6 +71,14 @@ parseXml opts bin = newForeignPtr xmlFreeDoc =<<
         throwErrnoIfNull "xmlReadMemory" $ xmlReadMemory 
             ptr (fromIntegral len) nullPtr nullPtr (foldl (.|.) 0 opts))
 
+-- | 'parseXml' @parseOpts text@ parses @text@ into an XML document using 
+-- libxml according to options given by @parseOpts@.
+parseHtml :: [CInt] -> BS.ByteString -> IO (ForeignPtr LibXMLDoc)
+parseHtml opts bin = newForeignPtr xmlFreeDoc =<<
+    (BS.unsafeUseAsCStringLen bin $ \(ptr, len) ->
+        throwErrnoIfNull "htmlReadMemory" $ htmlReadMemory
+            ptr (fromIntegral len) nullPtr nullPtr (foldl (.|.) 0 opts))
+
 -- | 'withXmlXPathNodeList' @docPtr xPathLocation continuation@ evaluates the
 -- XPath location path given by @xPathLocation@ in the document context 
 -- pointed at by @docPtr@ and calls @continuation@ with the result.
@@ -153,7 +161,7 @@ c14n opts mode nsPrefixes keepComments xpath bin =
 
 withXmlBuffer :: (Ptr LibXMLBuffer -> IO a) -> IO (BS.ByteString,  a)
 withXmlBuffer act =
-    let bufferSize = 1024*1024*10 in
+    let bufferSize = 1024*1024*100 in
     bracket
         (throwErrnoIfNull "xmlCreateBufferSize" $ xmlCreateBufferSize bufferSize)
         xmlBufferFree
@@ -167,16 +175,18 @@ withXmlBuffer act =
 
 evalXPath :: BS.ByteString -- ^ input document
           -> BS.ByteString -- ^ input xpath
-          -> IO BS.ByteString -- ^ result in string form
+          -> IO (Maybe BS.ByteString) -- ^ result in string form
 evalXPath doc xpath = do
-    let opts = [{-xml_opt_noerror,-} xml_opt_recover]
-    parsedDoc <- parseXml opts doc
+    let opts = [xml_opt_noerror, xml_opt_recover, xml_opt_noent]
+    parsedDoc <- parseHtml opts doc
+    --putStrLn ("*** doc len: " ++ show (BS.length doc))
+    --putStrLn ("*** xpath len: " ++ show (BS.length xpath))
     withForeignPtr parsedDoc $ \ptr -> do
         withXmlXPathNodeList ptr xpath $ \nsPtr -> do
-            (buf, _) <- withXmlBuffer $ \bufferPtr -> do
+            (str, haveResult) <- withXmlBuffer $ \bufferPtr -> do
                 errCode <- xmlNodeSetDump bufferPtr nsPtr
+                -- putStrLn ("*** err code: " ++ show errCode)
                 when (errCode < 0) $ fail ("Buffer error: " ++ show (errCode + 100))
-                return ()
-            return buf
-
+                return (errCode == 0)
+            return $ if haveResult then Just str else Nothing
 

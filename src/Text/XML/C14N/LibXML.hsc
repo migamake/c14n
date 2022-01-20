@@ -46,6 +46,7 @@ module Text.XML.C14N.LibXML (
     xml_opt_ignore_env,
     xml_opt_big_lines,
     xmlReadMemory,
+    htmlReadMemory,
     xmlFreeDoc,
 
     -- * XML canonicalisation
@@ -231,6 +232,15 @@ foreign import ccall unsafe "libxml/parser.h xmlReadMemory"
                   -> CString 
                   -> CInt 
                   -> IO (Ptr LibXMLDoc)
+
+-- | Parses an XML document from a textual representation held in memory.
+foreign import ccall unsafe "libxml/parser.h htmlReadMemory"
+    htmlReadMemory :: CString   -- ^ buffer
+                   -> CInt      -- ^ size of document
+                   -> CString   -- ^ URL
+                   -> CString   -- ^ encoding
+                   -> CInt      -- ^ options
+                   -> IO (Ptr LibXMLDoc)
 
 -- | Writes the canonicalised representation of an XML document to memory.
 foreign import ccall unsafe "libxml/c14n.h xmlC14NDocDumpMemory"
