@@ -13,6 +13,7 @@ module Text.XML.C14N (
     c14n_exclusive_1_0,
     c14n_1_1,
     c14n,
+    LibXMLDoc,
 
     -- * Parsing
     xml_opt_recover, 
@@ -38,8 +39,11 @@ module Text.XML.C14N (
     xml_opt_oldsax,
     xml_opt_ignore_env,
     xml_opt_big_lines,
+    defaultOpts,
     parseXml,
+    parseHtml,
 
+    evalXPath',
     evalXPath
 ) where 
 
@@ -62,6 +66,9 @@ import Foreign.C.Error
 import Foreign.C.Types
 
 --------------------------------------------------------------------------------
+
+defaultOpts :: [CInt]
+defaultOpts = [xml_opt_noerror, xml_opt_recover, xml_opt_noent]
 
 -- | 'parseXml' @parseOpts text@ parses @text@ into an XML document using 
 -- libxml according to options given by @parseOpts@.
@@ -173,20 +180,22 @@ withXmlBuffer act =
             )
 
 
-evalXPath :: BS.ByteString -- ^ input document
-          -> BS.ByteString -- ^ input xpath
-          -> IO (Maybe BS.ByteString) -- ^ result in string form
-evalXPath doc xpath = do
-    let opts = [xml_opt_noerror, xml_opt_recover, xml_opt_noent]
-    parsedDoc <- parseHtml opts doc
-    --putStrLn ("*** doc len: " ++ show (BS.length doc))
-    --putStrLn ("*** xpath len: " ++ show (BS.length xpath))
+evalXPath' :: ForeignPtr LibXMLDoc -- ^ input document
+           -> BS.ByteString -- ^ input xpath
+           -> IO (Maybe BS.ByteString) -- ^ result in string form
+evalXPath' parsedDoc xpath =
     withForeignPtr parsedDoc $ \ptr -> do
         withXmlXPathNodeList ptr xpath $ \nsPtr -> do
             (str, haveResult) <- withXmlBuffer $ \bufferPtr -> do
                 errCode <- xmlNodeSetDump bufferPtr nsPtr
-                -- putStrLn ("*** err code: " ++ show errCode)
                 when (errCode < 0) $ fail ("Buffer error: " ++ show (errCode + 100))
                 return (errCode == 0)
             return $ if haveResult then Just str else Nothing
+
+
+evalXPath :: BS.ByteString -- ^ input document
+          -> BS.ByteString -- ^ input xpath
+          -> IO (Maybe BS.ByteString) -- ^ result in string form
+evalXPath doc xpath =
+    parseHtml defaultOpts doc >>= flip evalXPath' xpath
 
