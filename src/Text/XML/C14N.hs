@@ -44,7 +44,8 @@ module Text.XML.C14N (
     parseHtml,
 
     evalXPath',
-    evalXPath
+    evalXPath,
+    evalXPathArr,
 ) where 
 
 --------------------------------------------------------------------------------
@@ -53,8 +54,10 @@ import Control.Monad
 import Control.Exception
 
 import Data.Bits
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
+import Data.Vector (Vector)
 
 import Text.XML.C14N.LibXML
 
@@ -72,7 +75,7 @@ defaultOpts = [xml_opt_noerror, xml_opt_recover, xml_opt_noent]
 
 -- | 'parseXml' @parseOpts text@ parses @text@ into an XML document using 
 -- libxml according to options given by @parseOpts@.
-parseXml :: [CInt] -> BS.ByteString -> IO (ForeignPtr LibXMLDoc) 
+parseXml :: [CInt] -> ByteString -> IO (ForeignPtr LibXMLDoc) 
 parseXml opts bin = newForeignPtr xmlFreeDoc =<< 
     (BS.unsafeUseAsCStringLen bin $ \(ptr, len) ->  
         throwErrnoIfNull "xmlReadMemory" $ xmlReadMemory 
@@ -80,7 +83,7 @@ parseXml opts bin = newForeignPtr xmlFreeDoc =<<
 
 -- | 'parseXml' @parseOpts text@ parses @text@ into an XML document using 
 -- libxml according to options given by @parseOpts@.
-parseHtml :: [CInt] -> BS.ByteString -> IO (ForeignPtr LibXMLDoc)
+parseHtml :: [CInt] -> ByteString -> IO (ForeignPtr LibXMLDoc)
 parseHtml opts bin = newForeignPtr xmlFreeDoc =<<
     (BS.unsafeUseAsCStringLen bin $ \(ptr, len) ->
         throwErrnoIfNull "htmlReadMemory" $ htmlReadMemory
@@ -90,7 +93,7 @@ parseHtml opts bin = newForeignPtr xmlFreeDoc =<<
 -- XPath location path given by @xPathLocation@ in the document context 
 -- pointed at by @docPtr@ and calls @continuation@ with the result.
 withXmlXPathNodeList :: Ptr LibXMLDoc 
-                     -> BS.ByteString 
+                     -> ByteString 
                      -> (Ptr LibXMLNodeSet -> IO a) 
                      -> IO a
 withXmlXPathNodeList docPtr expr cont = 
@@ -123,11 +126,11 @@ withXmlXPathNodeList docPtr expr cont =
 -- be included in the canonicalised result.
 c14n :: [CInt]
      -> CInt 
-     -> [BS.ByteString] 
+     -> [ByteString] 
      -> Bool 
-     -> Maybe BS.ByteString 
-     -> BS.ByteString 
-     -> IO BS.ByteString
+     -> Maybe ByteString 
+     -> ByteString 
+     -> IO ByteString
 c14n opts mode nsPrefixes keepComments xpath bin = 
     -- parse the input xml
     parseXml opts bin >>= \docPtr ->
@@ -166,7 +169,7 @@ c14n opts mode nsPrefixes keepComments xpath bin =
 --
 --
 
-withXmlBuffer :: (Ptr LibXMLBuffer -> IO a) -> IO (BS.ByteString,  a)
+withXmlBuffer :: (Ptr LibXMLBuffer -> IO a) -> IO (ByteString,  a)
 withXmlBuffer act =
     let bufferSize = 1024*1024*100 in
     bracket
@@ -181,8 +184,8 @@ withXmlBuffer act =
 
 
 evalXPath' :: ForeignPtr LibXMLDoc -- ^ input document
-           -> BS.ByteString -- ^ input xpath
-           -> IO (Maybe BS.ByteString) -- ^ result in string form
+           -> ByteString -- ^ input xpath
+           -> IO (Maybe ByteString) -- ^ result in string form
 evalXPath' parsedDoc xpath =
     withForeignPtr parsedDoc $ \ptr -> do
         withXmlXPathNodeList ptr xpath $ \nsPtr -> do
@@ -193,9 +196,27 @@ evalXPath' parsedDoc xpath =
             return $ if haveResult then Just str else Nothing
 
 
-evalXPath :: BS.ByteString -- ^ input document
-          -> BS.ByteString -- ^ input xpath
-          -> IO (Maybe BS.ByteString) -- ^ result in string form
+
+evalXPathArr' :: ForeignPtr LibXMLDoc -- ^ input document
+              -> ByteString -- ^ input xpath
+              -> IO (Vector ByteString) -- ^ result in string form
+evalXPathArr' parsedDoc xpath =
+    withForeignPtr parsedDoc $ \ptrParsedDoc ->
+        withXmlXPathNodeList ptrParsedDoc xpath $ \nsPtr ->
+            xmlNodeSetDumpArr nsPtr
+
+
+evalXPath :: ByteString -- ^ input document
+          -> ByteString -- ^ input xpath
+          -> IO (Maybe ByteString) -- ^ result in string form
 evalXPath doc xpath =
     parseHtml defaultOpts doc >>= flip evalXPath' xpath
+
+
+
+evalXPathArr :: ByteString -- ^ input document
+             -> ByteString -- ^ input xpath
+             -> IO (Vector ByteString) -- ^ result in string form
+evalXPathArr doc xpath =
+    parseHtml defaultOpts doc >>= flip evalXPathArr' xpath
 

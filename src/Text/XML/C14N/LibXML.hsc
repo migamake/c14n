@@ -67,15 +67,24 @@ module Text.XML.C14N.LibXML (
     xmlCreateBufferSize,
     xmlBufferContent,
     xmlBufferFree,
-    xmlNodeSetDump
+    xmlNodeSetDump,
+    xmlNodeSetSize,
+    xmlNodeSetDumpArr
 ) where 
 
 --------------------------------------------------------------------------------
 
 #include <libxml/parser.h>
 #include <libxml/c14n.h>
+#include <string.h>
 
 import Data.Word
+import Data.ByteString (ByteString)
+import Data.Vector (Vector)
+-- import qualified Data.ByteString as BS
+import qualified Data.ByteString.Unsafe as BS
+import qualified Data.Vector as V
+import System.IO.Unsafe
 
 import Foreign.Ptr
 import Foreign.C.String
@@ -289,6 +298,40 @@ foreign import ccall unsafe "libxml/tree.h xmlBufferContent"
 -- | Free the buffer
 foreign import ccall unsafe "libxml/tree.h xmlBufferFree"
     xmlBufferFree :: Ptr LibXMLBuffer -> IO ()
+
+-- | Get number of items in node set
+--
+xmlNodeSetSize :: Ptr LibXMLNodeSet -> Int
+xmlNodeSetSize nodeSet = fromIntegral $ unsafePerformIO $
+    [C.block| int {
+        xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+        if (NULL == nodeSetPtr)
+            return 0;
+        else if (nodeSetPtr->nodeNr <= 0)
+            return 0;
+        else
+            return nodeSetPtr->nodeNr;
+    }|]
+
+
+xmlNodeSetDumpArr :: Ptr LibXMLNodeSet
+                  -> IO (Vector ByteString)
+xmlNodeSetDumpArr nodeSet = do
+    V.generateM (xmlNodeSetSize nodeSet) $ \i ->
+        let i' = fromIntegral i in
+        BS.unsafePackMallocCString =<< [C.block| char* {
+            xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+            xmlNodePtr node = nodeSetPtr->nodeTab[$(int i')];
+            xmlBufferPtr buf = xmlBufferCreateSize(10*1024*1024); // TODO use xmlNodeDumpOutput
+            int writtenBytes = xmlNodeDump(buf, NULL, node, 0, 0); // as in `xmllint`
+            char* ret;
+            if (writtenBytes < 0)
+                ret = strdup("?"); // TODO report error
+            else
+                ret = strdup(xmlBufferContent(buf));
+            xmlBufferFree(buf);
+            return ret;
+        }|]
 
 
 xmlNodeSetDump :: Ptr LibXMLBuffer

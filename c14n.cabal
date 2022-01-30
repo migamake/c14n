@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 2.2
 
 -- This file has been generated from package.yaml by hpack version 0.34.4.
 --
@@ -32,6 +32,7 @@ library
   hs-source-dirs:
       src
   ghc-options: -W
+  cc-options: -std=c99 -Wno-builtin-declaration-mismatch
   c-sources:
       cbits/libxml.c
   extra-libraries:
@@ -44,4 +45,5 @@ library
     , containers
     , inline-c
     , template-haskell
+    , vector
   default-language: Haskell2010
