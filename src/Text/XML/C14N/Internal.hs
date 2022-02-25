@@ -12,19 +12,32 @@ import           Language.C.Inline.Context
 import qualified Language.C.Types as CT
 
 
+-- | XML documents
+data LibXMLDoc
+
+
+-- | XML node
+data LibXMLNode
+
+
 -- | XML node sets
 data LibXMLNodeSet
+
 
 -- | XML Buffer
 data LibXMLBuffer
 
+
 xmlCtx :: C.Context
-xmlCtx = baseCtx <> ctx
+xmlCtx = baseCtx <> bsCtx <> ctx
   where
     ctx = mempty { ctxTypesTable = xmlTypesTable }
 
+
 xmlTypesTable :: Map.Map CT.TypeSpecifier TH.TypeQ
 xmlTypesTable = Map.fromList
-    [ (CT.TypeName "xmlBuffer",  [t| LibXMLBuffer  |])
+    [ (CT.TypeName "xmlDoc",     [t| LibXMLDoc     |])
+    , (CT.TypeName "xmlNode",    [t| LibXMLNode    |])
     , (CT.TypeName "xmlNodeSet", [t| LibXMLNodeSet |])
+    , (CT.TypeName "xmlBuffer",  [t| LibXMLBuffer  |])
     ]

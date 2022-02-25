@@ -44,8 +44,19 @@ module Text.XML.C14N (
     parseHtml,
 
     evalXPath',
+    evalXPath'',
+    evalXPath'each,
     evalXPath,
     evalXPathArr,
+    testLibxml,
+
+    nodePathIdx,
+    nodeByPath,
+    dumpNode ,
+    nodeChildren,
+    nodeNext,
+    nodeName,
+    isNullPtr 
 ) where 
 
 --------------------------------------------------------------------------------
@@ -58,6 +69,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import Data.Vector (Vector)
+import qualified Data.Vector as V
 
 import Text.XML.C14N.LibXML
 
@@ -71,7 +83,7 @@ import Foreign.C.Types
 --------------------------------------------------------------------------------
 
 defaultOpts :: [CInt]
-defaultOpts = [xml_opt_noerror, xml_opt_recover, xml_opt_noent]
+defaultOpts = [xml_opt_recover, xml_opt_noent, xml_opt_noerror, xml_opt_nonet, xml_opt_compact]
 
 -- | 'parseXml' @parseOpts text@ parses @text@ into an XML document using 
 -- libxml according to options given by @parseOpts@.
@@ -183,18 +195,34 @@ withXmlBuffer act =
             )
 
 
+evalXPath'' :: ForeignPtr LibXMLDoc        -- ^ input document
+            -> ByteString                  -- ^ input xpath
+            -> (Ptr LibXMLNodeSet -> IO a) -- ^ convertor
+            -> IO a                        -- ^ result
+evalXPath'' parsedDoc xpath fun =
+    withForeignPtr parsedDoc $ \ptr ->
+        withXmlXPathNodeList ptr xpath fun
+
+evalXPath'each :: ForeignPtr LibXMLDoc     -- ^ input document
+               -> ByteString               -- ^ input xpath
+               -> (Ptr LibXMLNode -> IO a) -- ^ convertor
+               -> IO (Vector a)            -- ^ result
+evalXPath'each parsedDoc xpath mapper =
+    withForeignPtr parsedDoc $ \ptr ->
+        withXmlXPathNodeList ptr xpath $ \nsPtr ->
+            xmlNodeSetMap nsPtr mapper
+
+
 evalXPath' :: ForeignPtr LibXMLDoc -- ^ input document
            -> ByteString -- ^ input xpath
            -> IO (Maybe ByteString) -- ^ result in string form
 evalXPath' parsedDoc xpath =
-    withForeignPtr parsedDoc $ \ptr -> do
-        withXmlXPathNodeList ptr xpath $ \nsPtr -> do
-            (str, haveResult) <- withXmlBuffer $ \bufferPtr -> do
-                errCode <- xmlNodeSetDump bufferPtr nsPtr
-                when (errCode < 0) $ fail ("Buffer error: " ++ show (errCode + 100))
-                return (errCode == 0)
-            return $ if haveResult then Just str else Nothing
-
+    evalXPath'' parsedDoc xpath $ \nsPtr -> do
+        (str, haveResult) <- withXmlBuffer $ \bufferPtr -> do
+            errCode <- xmlNodeSetDump bufferPtr nsPtr
+            when (errCode < 0) $ fail ("Buffer error: " ++ show (errCode + 100))
+            return (errCode == 0)
+        return $ if haveResult then Just str else Nothing
 
 
 evalXPathArr' :: ForeignPtr LibXMLDoc -- ^ input document
