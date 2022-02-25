@@ -48,7 +48,6 @@ module Text.XML.C14N (
     evalXPath'each,
     evalXPath,
     evalXPathArr,
-    testLibxml,
 
     nodePathIdx,
     nodeByPath,
@@ -69,7 +68,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import Data.Vector (Vector)
-import qualified Data.Vector as V
 
 import Text.XML.C14N.LibXML
 

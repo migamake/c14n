@@ -75,8 +75,6 @@ module Text.XML.C14N.LibXML (
     xmlNodeSetDumpArr,
     xmlNodeSetMap,
 
-    testLibxml,
-
     nodePathIdx ,
     nodeByPath ,
     dumpNode ,
