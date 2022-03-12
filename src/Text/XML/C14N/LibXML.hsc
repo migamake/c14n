@@ -75,14 +75,15 @@ module Text.XML.C14N.LibXML (
     xmlNodeSetDumpArr,
     xmlNodeSetMap,
 
-    nodePathIdx ,
-    nodeByPath ,
-    dumpNode ,
-
-    nodeChildren ,
+    nodePathIdx,
+    nodeByPath,
+    dumpNode,
+    nodeFirstChild,
+    nodeChildren,
     nodeNext,
-    isNullPtr ,
-    nodeName
+    isNullPtr,
+    nodeName,
+    nodePositionInNamesakes 
 ) where 
 
 --------------------------------------------------------------------------------
@@ -91,6 +92,7 @@ module Text.XML.C14N.LibXML (
 #include <libxml/c14n.h>
 #include <string.h>
 
+import Control.Monad
 import Data.Word
 import Data.Function
 import Data.ByteString (ByteString)
@@ -395,9 +397,11 @@ nodeParent :: Ptr LibXMLNode -> Ptr LibXMLNode
 nodeParent node = [C.pure| xmlNode* { $(xmlNode* node)->parent } |]
 
 
-nodeChildren :: Ptr LibXMLNode -> Ptr LibXMLNode
-nodeChildren node = [C.pure| xmlNode* { $(xmlNode* node)->children } |]
+nodeFirstChild :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodeFirstChild node = [C.pure| xmlNode* { $(xmlNode* node)->children } |]
 
+nodePrev :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodePrev node = [C.pure| xmlNode* { $(xmlNode* node)->prev } |]
 
 nodeNext :: Ptr LibXMLNode -> Ptr LibXMLNode
 nodeNext node = [C.pure| xmlNode* { $(xmlNode* node)->next } |]
@@ -429,21 +433,23 @@ nodePathIdx doc node = do
         | otherwise        = return $ Just (idx, parent)
       where
         parent = nodeParent node
-        firstSibling = nodeChildren $ nodeParent node
+        firstSibling = nodeFirstChild $ nodeParent node
         idx = (flip fix) (firstSibling, 0) $ \nxt (n, i) ->
                         if n == node then i
                         else if isNullPtr n then (-1) -- TODO throw error here (or simple `Left something`)
                         else nxt (nodeNext n, if nodeType n == xml_element_dtd_node then i else succ i)
 
-nodeByPath :: Ptr LibXMLDoc -> Vector Int -> Ptr LibXMLNode
+nodeByPath :: ForeignPtr LibXMLDoc -> VU.Vector Int -> IO (Ptr LibXMLNode)
 nodeByPath doc path
-    | V.null path      = nullPtr
-    | V.head path /= 0 = nullPtr -- TODO exception
-    | otherwise   = V.foldl childByIdx rootNode (V.tail path)
+    | VU.null path      = return $ nullPtr
+    | VU.head path /= 0 = return $ nullPtr -- TODO exception
+    | otherwise =
+        withForeignPtr doc $ \doc' -> do
+            let rootNode = [C.pure| xmlNode* { xmlDocGetRootElement($(xmlDoc* doc')) } |]
+            return $ VU.foldl childByIdx rootNode (VU.tail path)
   where
-    rootNode = [C.pure| xmlNode* { xmlDocGetRootElement($(xmlDoc* doc)) } |]
     childByIdx :: Ptr LibXMLNode -> Int -> Ptr LibXMLNode
-    childByIdx node idx = go idx (nodeChildren node)
+    childByIdx node idx = go idx (nodeFirstChild node)
       where
         go 0 node = node
         go i node = go (pred i) (nodeNext node)
@@ -453,5 +459,62 @@ dumpNode :: Ptr LibXMLDoc -> Ptr LibXMLNode -> IO ()
 dumpNode doc node
     | isNullPtr node = return ()
     | otherwise = [C.block| void { xmlElemDump(stdout, $(xmlDoc* doc), $(xmlNode* node)); }|]
+
+
+nodeChildren :: Ptr LibXMLNode -> [Ptr LibXMLNode]
+nodeChildren node = children
+  where
+    firstChild = nodeFirstChild node
+    children = iterate' (not . isNullPtr) nodeNext firstChild
+
+-- | Find position of node among same name nodes.
+--
+--   Let's loot at an example:
+--
+--   <body>
+--      <div id="d1">...</div>
+--      <p>...</p>
+--      <div id="d2">...</div>
+--      <p>...</p>
+--      <div id="d3">...</div>
+--    <body>
+--
+--    And we want to get position of `//div[@id="d2"]`.
+--    Than this function returns `Just (1, ["//div[@id="d1"]", "//div[@id="d3"]"])`.
+--
+--    TODO Make additional package "libxml-additional" and move this function to that package.
+--
+nodePositionInNamesakes
+    :: ForeignPtr LibXMLDoc       -- ^ Document
+    -> Ptr LibXMLNode             -- ^ Node
+    -> IO (Maybe (Int, [Ptr LibXMLNode])) -- ^ Just (position of node among nodes with same name, all other same name nodes (or [] if no such nodes))
+                                          --   Nothing if node is not exists
+nodePositionInNamesakes doc node
+    | isNullPtr node = return Nothing
+    | otherwise = do
+        let prevs = tail' $ iterate' (not . isNullPtr) nodePrev node
+            nexts = tail' $ iterate' (not . isNullPtr) nodeNext node
+        name <- nodeName node
+        namesakedPrevs <- filterM (sameNameElementNode name) prevs
+        namesakedNexts <- filterM (sameNameElementNode name) nexts
+        touchForeignPtr doc -- TODO
+        return $ Just (length namesakedPrevs, reverse namesakedPrevs ++ namesakedNexts)
+  where
+    sameNameElementNode :: ByteString -> Ptr LibXMLNode -> IO Bool
+    sameNameElementNode name node
+        | nodeType node == xml_element_dtd_node = return False
+        | otherwise = do
+            -- TODO make it with `Data.ByteString.Internal.memcmp`; without ByteString creation
+            nname <- nodeName node
+            return $ name == nname
+    tail' [] = []
+    tail' (_:lst) = lst
+
+
+iterate' :: (a -> Bool) -> (a -> a) -> a -> [a]
+iterate' p f = go
+  where
+    go x | p x       = x : go (f x)
+         | otherwise = []
 
 -- vim: set ft=haskell :

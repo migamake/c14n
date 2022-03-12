@@ -52,10 +52,12 @@ module Text.XML.C14N (
     nodePathIdx,
     nodeByPath,
     dumpNode ,
+    nodeFirstChild,
     nodeChildren,
     nodeNext,
     nodeName,
-    isNullPtr 
+    isNullPtr,
+    nodePositionInNamesakes
 ) where 
 
 --------------------------------------------------------------------------------
