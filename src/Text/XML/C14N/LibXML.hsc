@@ -4,16 +4,21 @@
 -- This source code is licensed under the MIT license found in the LICENSE    --
 -- file in the root directory of this source tree.                            --
 --------------------------------------------------------------------------------
-
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 -- | Bindings to libxml types and functions required for the c14n 
 -- implementation. See http://xmlsoft.org/html/libxml-c14n.html
 module Text.XML.C14N.LibXML (
     -- * libxml2 types
     LibXMLDoc,
+    LibXMLNode,
     LibXMLNodeSet,
     LibXMLChar,
     LibXMLXPathCtx,
     LibXMLXPathObj,
+    LibXMLBuffer,
 
     -- * Memory-related functions
     freeXml,
@@ -44,6 +49,7 @@ module Text.XML.C14N.LibXML (
     xml_opt_ignore_env,
     xml_opt_big_lines,
     xmlReadMemory,
+    htmlReadMemory,
     xmlFreeDoc,
 
     -- * XML canonicalisation
@@ -58,19 +64,60 @@ module Text.XML.C14N.LibXML (
     xmlXPathNewContext,
     xmlXPathFreeContext,
     xmlXPathEval,
-    xmlXPathFreeObject
+    xmlXPathFreeObject,
+
+
+    xmlCreateBufferSize,
+    xmlBufferContent,
+    xmlBufferFree,
+    xmlNodeSetDump,
+    xmlNodeSetSize,
+    xmlNodeSetDumpArr,
+    xmlNodeSetMap,
+
+    nodePathIdx,
+    nodeByPath,
+    dumpNode,
+    nodeFirstChild,
+    nodeChildren,
+    nodeNext,
+    isNullPtr,
+    nodeName,
+    nodePositionInNamesakes 
 ) where 
 
 --------------------------------------------------------------------------------
 
 #include <libxml/parser.h>
 #include <libxml/c14n.h>
+#include <string.h>
 
+import Control.Monad
 import Data.Word
+import Data.Function
+import Data.ByteString (ByteString)
+import Data.Vector (Vector)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Unsafe as BS
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import System.IO.Unsafe
 
-import Foreign.Ptr
 import Foreign.C.String
 import Foreign.C.Types
+import Foreign.ForeignPtr
+import Foreign.Ptr
+
+import qualified Language.C.Inline as C
+
+import Text.XML.C14N.Internal
+
+
+C.context xmlCtx
+
+C.include "<libxml/tree.h>"
+C.include "<libxml/HTMLparser.h>"
+C.include "<libxml/xpath.h>"
 
 --------------------------------------------------------------------------------
 
@@ -183,11 +230,10 @@ xml_opt_big_lines = #{const XML_PARSE_BIG_LINES}
 
 --------------------------------------------------------------------------------
 
--- | XML documents
-data LibXMLDoc 
+xml_element_dtd_node :: CInt
+xml_element_dtd_node = #{const XML_DTD_NODE}
 
--- | XML node sets
-data LibXMLNodeSet
+--------------------------------------------------------------------------------
 
 -- | XML strings
 type LibXMLChar = #type xmlChar
@@ -214,6 +260,15 @@ foreign import ccall unsafe "libxml/parser.h xmlReadMemory"
                   -> CString 
                   -> CInt 
                   -> IO (Ptr LibXMLDoc)
+
+-- | Parses an XML document from a textual representation held in memory.
+foreign import ccall unsafe "libxml/HTMLparser.h htmlReadMemory"
+    htmlReadMemory :: CString   -- ^ buffer
+                   -> CInt      -- ^ size of document
+                   -> CString   -- ^ URL
+                   -> CString   -- ^ encoding
+                   -> CInt      -- ^ options
+                   -> IO (Ptr LibXMLDoc)
 
 -- | Writes the canonicalised representation of an XML document to memory.
 foreign import ccall unsafe "libxml/c14n.h xmlC14NDocDumpMemory"
@@ -248,4 +303,218 @@ foreign import ccall unsafe "libxml/xpath.h xmlXPathEval"
 foreign import ccall unsafe "libxml/xpath.h xmlXPathFreeObject"
     xmlXPathFreeObject :: Ptr LibXMLXPathObj -> IO ()
 
---------------------------------------------------------------------------------
+
+
+-- | Create buffer with given size
+foreign import ccall unsafe "libxml/tree.h xmlBufferCreateSize"
+    xmlCreateBufferSize :: CInt -> IO (Ptr LibXMLBuffer)
+
+
+-- | Get buffer content
+foreign import ccall unsafe "libxml/tree.h xmlBufferContent"
+    xmlBufferContent :: Ptr LibXMLBuffer -> IO CString
+
+-- | Free the buffer
+foreign import ccall unsafe "libxml/tree.h xmlBufferFree"
+    xmlBufferFree :: Ptr LibXMLBuffer -> IO ()
+
+-- | Get number of items in node set
+--
+xmlNodeSetSize :: Ptr LibXMLNodeSet -> Int
+xmlNodeSetSize nodeSet = fromIntegral $ unsafePerformIO $
+    [C.block| int {
+        xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+        if (NULL == nodeSetPtr)
+            return 0;
+        else if (nodeSetPtr->nodeNr <= 0)
+            return 0;
+        else
+            return nodeSetPtr->nodeNr;
+    }|]
+
+
+xmlNodeSetDumpArr :: Ptr LibXMLNodeSet
+                  -> IO (Vector ByteString)
+xmlNodeSetDumpArr nodeSet = do
+    V.generateM (xmlNodeSetSize nodeSet) $ \i ->
+        let i' = fromIntegral i in
+        BS.unsafePackMallocCString =<< [C.block| char* {
+            xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+            xmlNodePtr node = nodeSetPtr->nodeTab[$(int i')];
+            xmlBufferPtr buf = xmlBufferCreateSize(10*1024*1024); // TODO use xmlNodeDumpOutput
+            int writtenBytes = xmlNodeDump(buf, NULL, node, 0, 0); // as in `xmllint`
+            char* ret;
+            if (writtenBytes < 0)
+                ret = strdup("?"); // TODO report error
+            else
+                ret = strdup(xmlBufferContent(buf));
+            xmlBufferFree(buf);
+            return ret;
+        }|]
+
+
+xmlNodeSetMap :: Ptr LibXMLNodeSet
+              -> (Ptr LibXMLNode -> IO a)
+              -> IO (Vector a)
+xmlNodeSetMap nodeSet mapper =
+    V.generateM (xmlNodeSetSize nodeSet) $ \i ->
+        let i' = fromIntegral i in
+        mapper [C.pure| xmlNode* { $(xmlNodeSet* nodeSet)->nodeTab[$(int i')] } |]
+
+
+xmlNodeSetDump :: Ptr LibXMLBuffer
+               -> Ptr LibXMLNodeSet
+               -> IO CInt -- return code, 0 for no errors
+                          --              1 for empty node set
+                          --              2 for null node set ptr
+                          --             <-100 for buffer errors
+xmlNodeSetDump buf nodeSet =
+    -- TODO `xmlNodeDump` is deprecated, so rewrite with `xmlNodeDumpOutput`
+    [C.block| int {
+        xmlBufferPtr bufPtr = $(xmlBuffer* buf);
+        xmlNodeSetPtr nodeSetPtr = $(xmlNodeSet* nodeSet);
+        if (NULL == nodeSetPtr)
+            return 1;
+        if (nodeSetPtr->nodeNr <= 0)
+            return 2;
+        for (int i = 0; i < nodeSetPtr->nodeNr; ++i) {
+            xmlNodePtr node = nodeSetPtr->nodeTab[i];
+            int writtenBytes = xmlNodeDump(bufPtr, NULL, node, 0, 0); // as in `xmllint`
+            if (writtenBytes < 0)
+                return (writtenBytes - 100);
+            xmlBufferWriteChar(bufPtr, "\n");
+        }
+        xmlBufferWriteChar(bufPtr, "\0");
+        return 0;
+    }|]
+
+
+isNullPtr :: Ptr a -> Bool
+isNullPtr ptr = ptr == nullPtr -- TODO how to properly check it?
+
+
+nodeParent :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodeParent node = [C.pure| xmlNode* { $(xmlNode* node)->parent } |]
+
+
+nodeFirstChild :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodeFirstChild node = [C.pure| xmlNode* { $(xmlNode* node)->children } |]
+
+nodePrev :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodePrev node = [C.pure| xmlNode* { $(xmlNode* node)->prev } |]
+
+nodeNext :: Ptr LibXMLNode -> Ptr LibXMLNode
+nodeNext node = [C.pure| xmlNode* { $(xmlNode* node)->next } |]
+
+nodeType :: Ptr LibXMLNode -> CInt
+nodeType node = [C.pure| int { $(xmlNode* node)->type } |]
+
+
+nodeName :: Ptr LibXMLNode -> IO ByteString
+nodeName node = BS.packCString [C.pure| char const* { $(xmlNode* node)->name } |]
+
+-- | Find node "index path" by node ptr
+--
+--   NOTE we use `doc` just to ensure that this object still in memory due
+--        traversal. For same reason we use unboxed vectors: just to ensure
+--        that all calculations have finished before `doc` will be destroyed
+--        (because ordinary `Data.Vector` contains lazy references to data)
+--
+nodePathIdx :: ForeignPtr LibXMLDoc -> Ptr LibXMLNode -> IO (VU.Vector Int) -- TODO remove `IO` here
+nodePathIdx doc node = do
+    result <- fmap VU.reverse $ VU.unfoldrM go node
+    touchForeignPtr doc
+    return result
+  where
+    go :: Ptr LibXMLNode -> IO (Maybe (Int, Ptr LibXMLNode))
+    go node
+        | isNullPtr node   = return $ Nothing
+        | isNullPtr parent = return $ Nothing
+        | otherwise        = return $ Just (idx, parent)
+      where
+        parent = nodeParent node
+        firstSibling = nodeFirstChild $ nodeParent node
+        idx = (flip fix) (firstSibling, 0) $ \nxt (n, i) ->
+                        if n == node then i
+                        else if isNullPtr n then (-1) -- TODO throw error here (or simple `Left something`)
+                        else nxt (nodeNext n, if nodeType n == xml_element_dtd_node then i else succ i)
+
+nodeByPath :: ForeignPtr LibXMLDoc -> VU.Vector Int -> IO (Ptr LibXMLNode)
+nodeByPath doc path
+    | VU.null path      = return $ nullPtr
+    | VU.head path /= 0 = return $ nullPtr -- TODO exception
+    | otherwise =
+        withForeignPtr doc $ \doc' -> do
+            let rootNode = [C.pure| xmlNode* { xmlDocGetRootElement($(xmlDoc* doc')) } |]
+            return $ VU.foldl childByIdx rootNode (VU.tail path)
+  where
+    childByIdx :: Ptr LibXMLNode -> Int -> Ptr LibXMLNode
+    childByIdx node idx = go idx (nodeFirstChild node)
+      where
+        go 0 node = node
+        go i node = go (pred i) (nodeNext node)
+
+
+dumpNode :: Ptr LibXMLDoc -> Ptr LibXMLNode -> IO ()
+dumpNode doc node
+    | isNullPtr node = return ()
+    | otherwise = [C.block| void { xmlElemDump(stdout, $(xmlDoc* doc), $(xmlNode* node)); }|]
+
+
+nodeChildren :: Ptr LibXMLNode -> [Ptr LibXMLNode]
+nodeChildren node = children
+  where
+    firstChild = nodeFirstChild node
+    children = iterate' (not . isNullPtr) nodeNext firstChild
+
+-- | Find position of node among same name nodes.
+--
+--   Let's loot at an example:
+--
+--   <body>
+--      <div id="d1">...</div>
+--      <p>...</p>
+--      <div id="d2">...</div>
+--      <p>...</p>
+--      <div id="d3">...</div>
+--    <body>
+--
+--    And we want to get position of `//div[@id="d2"]`.
+--    Than this function returns `Just (1, ["//div[@id="d1"]", "//div[@id="d3"]"])`.
+--
+--    TODO Make additional package "libxml-additional" and move this function to that package.
+--
+nodePositionInNamesakes
+    :: ForeignPtr LibXMLDoc       -- ^ Document
+    -> Ptr LibXMLNode             -- ^ Node
+    -> IO (Maybe (Int, [Ptr LibXMLNode])) -- ^ Just (position of node among nodes with same name, all other same name nodes (or [] if no such nodes))
+                                          --   Nothing if node is not exists
+nodePositionInNamesakes doc node
+    | isNullPtr node = return Nothing
+    | otherwise = do
+        let prevs = tail' $ iterate' (not . isNullPtr) nodePrev node
+            nexts = tail' $ iterate' (not . isNullPtr) nodeNext node
+        name <- nodeName node
+        namesakedPrevs <- filterM (sameNameElementNode name) prevs
+        namesakedNexts <- filterM (sameNameElementNode name) nexts
+        touchForeignPtr doc -- TODO
+        return $ Just (length namesakedPrevs, reverse namesakedPrevs ++ namesakedNexts)
+  where
+    sameNameElementNode :: ByteString -> Ptr LibXMLNode -> IO Bool
+    sameNameElementNode name node
+        | nodeType node == xml_element_dtd_node = return False
+        | otherwise = do
+            -- TODO make it with `Data.ByteString.Internal.memcmp`; without ByteString creation
+            nname <- nodeName node
+            return $ name == nname
+    tail' [] = []
+    tail' (_:lst) = lst
+
+
+iterate' :: (a -> Bool) -> (a -> a) -> a -> [a]
+iterate' p f = go
+  where
+    go x | p x       = x : go (f x)
+         | otherwise = []
+
+-- vim: set ft=haskell :
